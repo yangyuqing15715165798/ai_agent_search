@@ -106,6 +106,7 @@ async def run_deep_agent(task_query, session_id, model_name=None):
     session_dir_token = set_session_context(session_dir_str)  # 存储的当前会话对应的文件夹地址
     session_id_token = set_thread_context(session_id)  #获取当前会话的session_id对应socket
 
+    monitor.report_task_started(model_name or DEFAULT_MODEL)
     monitor.report_session_dir(session_dir_str)  # 当前会话对应的文件夹地址推送给起前端！
 
     # 执行main_agent
@@ -128,6 +129,7 @@ async def run_deep_agent(task_query, session_id, model_name=None):
     4. 若存在上传文件，请先分析内容
     """
     # 反馈结果
+    final_result = None
     try:
         # 执行
         async for chunk in selected_agent.astream({
@@ -160,13 +162,21 @@ async def run_deep_agent(task_query, session_id, model_name=None):
                                     # 调用某个子智能体
                                     monitor.report_assistant(tool_call['args']['subagent_type'],{'description':tool_call['args']['description']})
                         elif last_msg.content:
-                            # 最终结果
-                            print(f"主智能体执行结果，最终结果：{last_msg.content[:100]}")
-                            monitor.report_task_result(last_msg.content)
+                            # 只缓存最终文本，避免把模型中间消息重复展示为答案
+                            final_result = last_msg.content
+                    elif node_name == 'tools' or getattr(last_msg, 'type', None) == 'tool':
+                        monitor.report_tool_result(
+                            getattr(last_msg, 'name', None) or node_name,
+                            getattr(last_msg, 'content', None)
+                        )
+
+        if final_result:
+            print(f"主智能体执行结果，最终结果：{final_result[:100]}")
+            monitor.report_task_result(final_result)
 
     except Exception as e :
         # 报错推送错误信息给前端
-        monitor._emit("error",f"执行主智能发生异常信息：{str(e)}")
+        monitor.report_task_error(f"执行主智能发生异常信息：{str(e)}")
     finally:
         # 释放存储的地址和session_id
         reset_session_context(session_dir_token, session_id_token)

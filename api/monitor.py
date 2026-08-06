@@ -1,5 +1,6 @@
 import datetime
 import asyncio
+import uuid
 from typing import Any, Dict, Optional
 from fastapi import WebSocket
 from api.context import get_thread_context
@@ -33,28 +34,38 @@ class ToolMonitor:
         if cls._instance is None:
             cls._instance = super(ToolMonitor, cls).__new__(cls)
             cls._instance.websocket_manager = None  # 预留给 FastAPI WebSocketManager
+            cls._instance._sequence = {}
+            cls._instance._started_at = {}
         return cls._instance
 
     def set_websocket_manager(self, manager):
         """设置 FastAPI 的 WebSocket 管理器"""
         self.websocket_manager = manager
 
-    def _emit(self, event_type: str, message: str, data: Optional[Dict[str, Any]] = None):
+    def _emit(self, event_type: str, message: str, data: Optional[Dict[str, Any]] = None,
+              *, stage: str = None, status: str = "info"):
         """内部发送方法"""
+        thread_id = get_thread_context()
+        seq = None
+        if thread_id:
+            seq = self._sequence.get(thread_id, 0) + 1
+            self._sequence[thread_id] = seq
         payload = {
             "type": "monitor_event",
+            "event_id": str(uuid.uuid4()),
+            "thread_id": thread_id,
+            "seq": seq,
             "event": event_type,
+            "stage": stage or event_type,
+            "status": status,
             "message": message,
             "data": data or {},
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
 
         # 1. 优先尝试通过 FastAPI WebSocket 发送 (定向推送)
         if self.websocket_manager:
             try:
-                # 获取当前线程 ID
-                thread_id = get_thread_context()
-
                 # 确保 loop 已加载 [fastapi的事件循环]
                 manager_loop = self.websocket_manager.loop
 
@@ -99,19 +110,61 @@ class ToolMonitor:
         # 3. 控制台保底输出 (方便调试)
         # 加上特殊前缀，方便肉眼识别
         print(f"\n[Monitor:{event_type}] {message}")
+        return payload
+
+    def report_task_started(self, model_name: str = None):
+        thread_id = get_thread_context()
+        if thread_id:
+            self._started_at[thread_id] = datetime.datetime.now(datetime.timezone.utc)
+        return self._emit(
+            "task_started", "任务已接收，开始分析", {"model": model_name},
+            stage="task", status="running"
+        )
 
     def report_tool(self, tool_name: str, args: Dict[str, Any] = None):
         """报告工具开始执行"""
-        self._emit("tool_start", f"开始执行工具: {tool_name}", {"tool_name": tool_name, "args": args})
+        return self._emit(
+            "tool_start", f"开始执行工具: {tool_name}", {"tool_name": tool_name, "args": args},
+            stage="tool", status="running"
+        )
+
+    def report_tool_result(self, tool_name: str, result: Any = None):
+        """报告工具执行完成，只记录结果规模，避免把原始数据推到前端。"""
+        result_length = len(result) if isinstance(result, (str, list, dict)) else None
+        return self._emit(
+            "tool_result", f"工具执行完成: {tool_name}",
+            {"tool_name": tool_name, "result_length": result_length},
+            stage="tool", status="success"
+        )
 
     def report_assistant(self, assistant_name: str, args: Dict[str, Any] = None):
         """报告正在调用的子智能体进度"""
-        self._emit("assistant_call", f"正在调用助手: {assistant_name}",
-                   {"assistant_name": assistant_name, "args": args})
+        return self._emit(
+            "assistant_call", f"正在调用助手: {assistant_name}",
+            {"assistant_name": assistant_name, "args": args},
+            stage="assistant", status="running"
+        )
 
     def report_task_result(self, result: str):
         """报告任务最终结果"""
-        self._emit("task_result", "任务执行完成", {"result": result})
+        thread_id = get_thread_context()
+        duration_ms = None
+        if thread_id in self._started_at:
+            duration_ms = int((datetime.datetime.now(datetime.timezone.utc) - self._started_at.pop(thread_id)).total_seconds() * 1000)
+        return self._emit(
+            "task_result", "任务执行完成", {"result": result, "duration_ms": duration_ms},
+            stage="synthesis", status="success"
+        )
+
+    def report_task_error(self, message: str):
+        thread_id = get_thread_context()
+        duration_ms = None
+        if thread_id in self._started_at:
+            duration_ms = int((datetime.datetime.now(datetime.timezone.utc) - self._started_at.pop(thread_id)).total_seconds() * 1000)
+        return self._emit(
+            "task_failed", message, {"duration_ms": duration_ms},
+            stage="task", status="error"
+        )
 
     def report_session_dir(self, path: str):
         """报告任务工作目录"""
