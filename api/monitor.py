@@ -125,6 +125,7 @@ monitor = ToolMonitor()
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        self.pending_messages: Dict[str, list[dict]] = {}
         # 延迟绑定 loop，防止初始化时 loop 不一致
         self.loop = None
 
@@ -139,6 +140,8 @@ class ConnectionManager:
         print(f"存储当前会话id:{thread_id}对应的:{websocket}")
         self.active_connections[thread_id] = websocket
         print(f"Client connected: {thread_id}")
+        for message in self.pending_messages.pop(thread_id, []):
+            await websocket.send_json(message)
 
     def disconnect(self, websocket: WebSocket, thread_id: str):
         if thread_id in self.active_connections:
@@ -152,6 +155,9 @@ class ConnectionManager:
         if thread_id in self.active_connections:
             websocket = self.active_connections[thread_id]
             await websocket.send_json(message)
+        else:
+            self.pending_messages.setdefault(thread_id, []).append(message)
+            self.pending_messages[thread_id] = self.pending_messages[thread_id][-20:]
 
 
 manager = ConnectionManager()

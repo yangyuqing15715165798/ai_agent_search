@@ -125,6 +125,43 @@ python api/server.py
 
 访问 `http://localhost:8000/docs` 能看到 Swagger 文档，直接在页面上试。
 
+> 推荐使用模块方式启动，避免直接执行 `api/server.py` 时出现项目根目录导入问题：
+>
+> ```bash
+> python -m uvicorn api.server:app --host 127.0.0.1 --port 8000
+> ```
+
+### 启动前端工作台
+
+项目现在包含一个独立的 React/Vite 前端，提供业务总览、商品库存、客户档案、售后服务和 Agent 任务面板。
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+默认访问 `http://localhost:5173`。前端默认连接 `http://127.0.0.1:8000`，如需修改后端地址，可设置：
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+前端 Agent 面板会通过 `/api/task` 提交任务，并通过 `/ws/{thread_id}` 接收实时执行轨迹和最终回答。
+
+### 可用模型
+
+后端通过 `/api/models` 提供当前可用模型列表，当前配置支持：
+
+```text
+sensenova-6.7-flash-lite
+deepseek-v4-flash
+glm-5.2
+sensenova-u1-fast
+```
+
+默认模型由 `.env` 中的 `LLM_QWEN_MAX` 指定。不同模型的可用性取决于你配置的 OpenAI 兼容服务商。
+
 ### 第四步：试一试
 
 ```bash
@@ -187,6 +224,10 @@ deep_search_pro/
 │   └── word_converter.py           # Word COM 引擎
 │
 ├── rawflow/                        # 📚 RAGFlow SDK 独立示例
+├── frontend/                       # 🖥️ React/Vite 业务工作台
+│   ├── src/main.jsx                # 页面、导航、Agent 任务交互
+│   ├── src/styles.css              # 工作台视觉样式与响应式布局
+│   └── package.json                # 前端依赖与启动脚本
 ├── prompt/prompts.yml              # 提示词配置
 ├── requirements.txt                # 依赖清单（版本锁定）
 └── .env.example                    # 环境变量模板
@@ -207,7 +248,7 @@ deep_search_pro/
 ### 进阶级（工程能力）
 
 - [ ] **把 InMemorySaver 换成 SqliteSaver**：让对话历史持久化，重启不丢失
-- [ ] **加一个简单的 Web 前端**：用聊天界面替代 curl，WebSocket 显示实时进度条
+- [x] **加一个简单的 Web 前端**：业务工作台支持 Agent 任务提交和 WebSocket 实时进度
 - [ ] **给子智能体加"反思"机制**：让子智能体执行完后再自我检查一遍，提高准确性
 - [ ] **加 JWT 认证**：给 `/api/task` 加上登录校验
 
@@ -231,6 +272,7 @@ deep_search_pro/
 | 知识库 | RAGFlow | 开源的 RAG 引擎，可以本地部署 |
 | 数据库 | MySQL | 关系型数据库，Agent 自动写 SQL |
 | 文档生成 | markdown + pywin32 | MD 生成 + Word COM 转 PDF |
+| 前端工作台 | **React + Vite** | 业务总览、数据目录和 Agent 任务面板 |
 
 ---
 
@@ -243,6 +285,10 @@ deep_search_pro/
 ### Q: 没有 RAGFlow 和 MySQL，项目还能跑吗?
 
 **A:** 能。主智能体会根据 system_prompt 判断只有"网络搜索"可用，自动跳过另外两个子智能体。只配 LLM + Tavily 就能体验完整链路。当然功能会受限——这就是刻意设计的"优雅降级"。
+
+### Q: 为什么网页上看不到 Agent 的最终回答？
+
+**A:** 当前版本已处理 WebSocket 连接时序问题。后端会暂存连接建立前产生的消息，前端也会单独渲染 `task_result` 中的最终回答。若服务版本较旧，请重启后端和前端后重新提交任务。
 
 ### Q: 为什么用 ContextVar 而不是全局变量？
 

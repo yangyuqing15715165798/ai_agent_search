@@ -16,6 +16,7 @@ project_root = current_dir.parent
 # Import agent runner and monitor
 # 注意：agent.main_agent 导入时会初始化 main_agent，这可能需要几秒钟
 from agent.main_agent import run_deep_agent
+from agent.llm import AVAILABLE_MODELS, DEFAULT_MODEL
 from api.monitor import manager
 
 app = FastAPI(title="DeepAgents API")
@@ -40,6 +41,12 @@ app.add_middleware(
 class TaskRequest(BaseModel):
     query: str
     thread_id: str = None
+    model: str = None
+
+
+@app.get("/api/models")
+async def list_models():
+    return {"models": AVAILABLE_MODELS, "default": DEFAULT_MODEL}
 
 @app.on_event("startup")
 async def startup_event():
@@ -59,7 +66,10 @@ async def run_task(request: TaskRequest):
 
     # 2. [后台执行] 异步运行 Agent，不阻塞主线程
     # 注意：这里简单的使用 asyncio.create_task 触发，由 main_agent 内部负责实时推送
-    asyncio.create_task(run_deep_agent(request.query, thread_id))
+    selected_model = request.model or DEFAULT_MODEL
+    if selected_model not in AVAILABLE_MODELS:
+        return {"error": f"不支持的模型: {selected_model}", "models": AVAILABLE_MODELS}
+    asyncio.create_task(run_deep_agent(request.query, thread_id, selected_model))
 
     # 3. [立即响应]
     return {"status": "started", "thread_id": thread_id}

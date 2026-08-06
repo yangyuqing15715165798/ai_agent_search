@@ -11,6 +11,7 @@ from tools.upload_file_read_tool import read_file_content
 from deepagents import create_deep_agent
 
 from agent.llm import model
+from agent.llm import AVAILABLE_MODELS, DEFAULT_MODEL, get_model
 from agent.prompts import main_agent_content
 
 from api.monitor import monitor
@@ -23,17 +24,26 @@ from api.context import set_session_context, reset_session_context, set_thread_c
 
 from langchain_core.messages import AIMessage
 
-main_agent = create_deep_agent(
-   model = model,
-   system_prompt=main_agent_content['system_prompt'],
-   tools= [generate_markdown,convert_md_to_pdf,read_file_content],
-   checkpointer=InMemorySaver(),
-   subagents=[
-       database_query_agent,
-       network_search_agent,
-       knowledge_base_agent
-   ]
-)
+def build_main_agent(model_name):
+    return create_deep_agent(
+       model=get_model(model_name),
+       system_prompt=main_agent_content['system_prompt'],
+       tools=[generate_markdown, convert_md_to_pdf, read_file_content],
+       checkpointer=InMemorySaver(),
+       subagents=[database_query_agent, network_search_agent, knowledge_base_agent]
+    )
+
+
+_agents = {DEFAULT_MODEL: build_main_agent(DEFAULT_MODEL)}
+
+
+def get_main_agent(model_name=None):
+    selected = model_name or DEFAULT_MODEL
+    if selected not in AVAILABLE_MODELS:
+        raise ValueError(f"不支持的模型: {selected}")
+    if selected not in _agents:
+        _agents[selected] = build_main_agent(selected)
+    return _agents[selected]
 
 # 执行
 """
@@ -53,14 +63,15 @@ project_root_path = Path(__file__).parents[1].resolve() # 绝对 解析路径标
 # main_agent.invoke()
 # main_agent.stream()
 # main_agent.astream() [选他]
-async def run_deep_agent(task_query,session_id):
+async def run_deep_agent(task_query, session_id, model_name=None):
     """
     定义流式+异步执行主智能体！！
     执行过程中，返回  会话文件化返回  调用子智能体  调用最终结果 （monitor）
     task_query: 前端提问的问题
     session_id: 每个前端会话对应的标识 （1.存储session_id ContextVars 2.session_id 给他创建对应的output输出地址）
     """
-    print(f"当前会话的main_agent开始执行了！ 会话id:{session_id}")
+    selected_agent = get_main_agent(model_name)
+    print(f"当前会话的main_agent开始执行了！ 会话id:{session_id} 模型:{model_name or DEFAULT_MODEL}")
     # 准备工作 【1. session_dir（前端） 2. relative_session_dir (大模型) 3. 上传的文件拼接上传文件专属提示词】
     # project_root_path / output / session_session_id(uuid)
     # 当前会话存储生成文件的专属文件夹
@@ -119,7 +130,7 @@ async def run_deep_agent(task_query,session_id):
     # 反馈结果
     try:
         # 执行
-        async for chunk in main_agent.astream({
+        async for chunk in selected_agent.astream({
             "messages":[
                 {
                     "role":"user","content":task_query+path_instruction
