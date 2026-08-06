@@ -1,9 +1,46 @@
 import datetime
 import asyncio
+import json
+import logging
 import uuid
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any, Dict, Optional
 from fastapi import WebSocket
 from api.context import get_thread_context
+
+
+LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+trace_logger = logging.getLogger("agent_trace")
+if not trace_logger.handlers:
+    trace_handler = RotatingFileHandler(
+        LOG_DIR / "agent_trace.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    trace_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    trace_logger.addHandler(trace_handler)
+    trace_logger.setLevel(logging.INFO)
+    trace_logger.propagate = False
+
+
+def safe_event_data(event_type: str, data: Dict[str, Any]):
+    """日志只保留核查所需的摘要，不记录 SQL、原始查询结果或密钥。"""
+    if event_type == "dataset_ready":
+        return {
+            "source": data.get("source"),
+            "columns": data.get("columns", []),
+            "row_count": data.get("row_count", 0),
+            "chart": data.get("chart", {}),
+        }
+    if event_type in {"tool_start", "tool_result"}:
+        return {"tool_name": data.get("tool_name"), "result_length": data.get("result_length")}
+    if event_type == "task_result":
+        return {"result_length": len(str(data.get("result", ""))), "duration_ms": data.get("duration_ms")}
+    if event_type == "task_started":
+        return {"model": data.get("model")}
+    if event_type == "task_failed":
+        return {"duration_ms": data.get("duration_ms")}
+    return {}
 
 # 尝试导入全局运行时（用于脚本模式下的流式输出）
 try:
@@ -62,6 +99,11 @@ class ToolMonitor:
             "data": data or {},
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
+        trace_logger.info(
+            "event=%s thread_id=%s seq=%s stage=%s status=%s message=%s data=%s",
+            event_type, thread_id, seq, payload["stage"], status,
+            str(message)[:500], json.dumps(safe_event_data(event_type, payload["data"]), ensure_ascii=False)
+        )
 
         # 1. 优先尝试通过 FastAPI WebSocket 发送 (定向推送)
         if self.websocket_manager:
@@ -135,6 +177,38 @@ class ToolMonitor:
             "tool_result", f"工具执行完成: {tool_name}",
             {"tool_name": tool_name, "result_length": result_length},
             stage="tool", status="success"
+        )
+
+    def report_dataset(self, source: str, columns: list[str], rows: list[list[Any]]):
+        """推送结构化查询结果，供前端绘图和表格展示。"""
+        numeric_indexes = [
+            index for index, _ in enumerate(columns)
+            if any(isinstance(row[index], (int, float)) and not isinstance(row[index], bool)
+                   for row in rows if index < len(row))
+        ]
+        category_index = next(
+            (index for index in range(len(columns)) if index not in numeric_indexes),
+            0
+        )
+        x_field = columns[category_index] if columns else None
+        y_fields = [columns[index] for index in numeric_indexes]
+        is_time_series = bool(x_field and any(
+            token in x_field.lower() for token in ("date", "time", "month", "year", "日期", "时间", "月份")
+        ))
+        chart_type = "line" if is_time_series else "bar"
+        return self._emit(
+            "dataset_ready", "查询结果已准备，可生成可视化", {
+                "source": source,
+                "columns": columns,
+                "rows": rows[:100],
+                "row_count": len(rows),
+                "chart": {
+                    "type": chart_type,
+                    "xField": x_field,
+                    "yFields": y_fields[:3],
+                    "title": f"{x_field or '查询结果'}数据分析"
+                }
+            }, stage="dataset", status="success"
         )
 
     def report_assistant(self, assistant_name: str, args: Dict[str, Any] = None):

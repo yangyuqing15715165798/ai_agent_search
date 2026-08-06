@@ -1,10 +1,26 @@
 import os
+from datetime import date, datetime
+from decimal import Decimal
 from dotenv import load_dotenv
 from api.monitor import monitor
 from mysql.connector import connect, Error
 from langchain_core.tools import tool
 
 load_dotenv()
+
+
+def normalize_db_value(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def normalize_db_rows(rows):
+    return [[normalize_db_value(value) for value in row] for row in rows]
 
 
 # 加载配置文件方便后续使用
@@ -122,6 +138,7 @@ def get_table_data(table_name)->str:
                 # 表数据
                 # [(1,张三),(2,李四),(3,二狗子)]
                 rows = cursor.fetchall()
+                monitor.report_dataset("get_table_data", columns, normalize_db_rows(rows))
                 # (1,张三) -> ('1','张三') -> '1,张三'
                 # ['1,张三','1,张三','1,张三','1,张三','1,张三']
                 results = [ ",".join(map(str,row)) for row in rows]
@@ -187,6 +204,7 @@ def execute_sql_query(query)->str:
                 # 表数据
                 # [(1,张三),(2,李四),(3,二狗子)]
                 rows = cursor.fetchall()
+                monitor.report_dataset("execute_sql_query", columns, normalize_db_rows(rows))
                 # (1,张三) -> ('1','张三') -> '1,张三'
                 # ['1,张三','1,张三','1,张三','1,张三','1,张三']
                 results = [ ",".join(map(str,row)) for row in rows]

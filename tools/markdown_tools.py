@@ -26,7 +26,7 @@ def generate_markdown(
 
     # 获取上下文中的会话目录
     session_dir = get_session_context()
-    print(f"⚠️ generate_markdown里拿到的session_dir：{session_dir}")  # 看这里！
+    print(f"[generate_markdown] session_dir={session_dir}")
 
     # --- 路径清洗与重定向逻辑 ---
     # 结合 path 和 filename

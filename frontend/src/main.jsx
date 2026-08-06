@@ -65,6 +65,7 @@ function App() {
   const [model, setModel] = useState(MODELS[0].id);
   const [threadId, setThreadId] = useState(null);
   const [events, setEvents] = useState([]);
+  const [datasets, setDatasets] = useState([]);
   const [taskState, setTaskState] = useState('idle');
 
   useEffect(() => {
@@ -73,7 +74,13 @@ function App() {
     socket.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
-        setEvents((current) => [...current, { ...payload, localTime: new Date().toLocaleTimeString() }].slice(-30));
+        const localTime = new Date().toLocaleTimeString();
+        setEvents((current) => [...current, { ...payload, localTime }].slice(-30));
+        if (payload.event === 'dataset_ready') {
+          setDatasets((current) => current.some((item) => item.event_id === payload.event_id)
+            ? current
+            : [...current, { ...payload, localTime }].slice(-10));
+        }
         if (payload.status === 'success' || payload.event === 'task_result') setTaskState('done');
         if (payload.status === 'error' || payload.event === 'task_failed' || payload.event === 'error') setTaskState('error');
       } catch { /* Ignore non-JSON heartbeat payloads. */ }
@@ -88,6 +95,7 @@ function App() {
     if (!task.trim() || taskState === 'running') return;
     setTaskState('running');
     setEvents([]);
+    setDatasets([]);
     try {
       const response = await fetch(`${API_BASE}/api/task`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: task, model: selectedModel }),
@@ -117,7 +125,7 @@ function App() {
       <main className="main-content">
         <header className="topbar"><div><span className="eyebrow">MONDAY · 2026 / 08 / 06</span><h1>{active === 'overview' ? '业务总览' : active === 'agent' ? 'Agent 任务' : '业务数据'}</h1></div><div className="top-actions"><button className="icon-button" aria-label="查看系统状态"><Icon name="pulse" /></button><div className="top-avatar">YQ</div></div></header>
         {active === 'overview' && <Overview onOpenAgent={() => setActive('agent')} />}
-        {active === 'agent' && <AgentPanel task={task} setTask={setTask} model={model} setModel={setModel} submitTask={submitTask} taskState={taskState} events={events} />} 
+         {active === 'agent' && <AgentPanel task={task} setTask={setTask} model={model} setModel={setModel} submitTask={submitTask} taskState={taskState} events={events} datasets={datasets} />}
         {active === 'data' && <DataPanel />}
         {active === 'products' && <ProductPanel query={query} setQuery={setQuery} products={filteredProducts} />}
         {active === 'customers' && <CustomerPanel />}
@@ -148,7 +156,7 @@ function Metric({ label, value, delta, icon, accent }) { return <div className="
 function Insight({ icon, title, text, tag }) { return <div className="insight"><div className="insight-icon"><Icon name={icon} size={16} /></div><div><strong>{title}</strong><p>{text}</p></div><span className="tag">{tag}</span></div>; }
 
 function eventLabel(event) {
-  return { task_started: '任务开始', session_created: '工作目录已准备', assistant_call: '调用子智能体', tool_start: '调用工具', task_result: '生成最终答案', task_failed: '任务失败' }[event] || event;
+  return { task_started: '任务开始', session_created: '工作目录已准备', assistant_call: '调用子智能体', tool_start: '调用工具', tool_result: '工具完成', dataset_ready: '数据已准备', task_result: '生成最终答案', task_failed: '任务失败' }[event] || event;
 }
 
 function formatDuration(milliseconds) {
@@ -156,9 +164,41 @@ function formatDuration(milliseconds) {
   return milliseconds < 1000 ? `${milliseconds} ms` : `${(milliseconds / 1000).toFixed(1)} s`;
 }
 
-function AgentPanel({ task, setTask, model, setModel, submitTask, taskState, events }) {
+function DatasetBlock({ dataset, receivedAt }) {
+  const columns = dataset?.columns || [];
+  const rows = dataset?.rows || [];
+  const chart = dataset?.chart || {};
+  const xIndex = Math.max(columns.indexOf(chart.xField), 0);
+  const yIndex = Math.max(columns.indexOf(chart.yFields?.[0]), 0);
+  const chartRows = rows.slice(0, 12).map((row) => ({
+    label: String(row[xIndex] ?? ''),
+    value: Number(row[yIndex]),
+  })).filter((row) => Number.isFinite(row.value));
+  const maxValue = Math.max(...chartRows.map((row) => row.value), 0);
+  const width = 720;
+  const height = 250;
+  const left = 48;
+  const bottom = 42;
+  const innerWidth = width - left - 20;
+  const innerHeight = height - bottom - 18;
+  const step = chartRows.length ? innerWidth / chartRows.length : innerWidth;
+  const valueY = (value) => 18 + innerHeight - (maxValue ? (value / maxValue) * innerHeight : 0);
+  const linePoints = chartRows.map((row, index) => `${left + step * (index + .5)},${valueY(row.value)}`).join(' ');
+
+  return <div className="dataset-block">
+    <div className="dataset-head"><div><p className="panel-label">DATASET / {dataset.source}</p><h4>{chart.title || '查询结果可视化'}</h4></div><span>{receivedAt} · {dataset.row_count ?? rows.length} 条记录</span></div>
+    {chartRows.length > 0 ? <svg className="dataset-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={chart.title || '查询结果图表'}>
+      <line x1={left} y1={18 + innerHeight} x2={width - 20} y2={18 + innerHeight} stroke="#dfe6e9" />
+      {chart.type === 'line' ? <><polyline points={linePoints} fill="none" stroke="#e4873d" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />{chartRows.map((row, index) => <circle key={`${row.label}-${index}`} cx={left + step * (index + .5)} cy={valueY(row.value)} r="4" fill="#e4873d" />)}</> : chartRows.map((row, index) => { const barWidth = Math.min(step * .56, 42); const x = left + step * index + (step - barWidth) / 2; const y = valueY(row.value); return <rect key={`${row.label}-${index}`} x={x} y={y} width={barWidth} height={18 + innerHeight - y} rx="3" fill="#e4873d" />; })}
+      {chartRows.map((row, index) => <text key={`label-${row.label}-${index}`} x={left + step * (index + .5)} y={height - 14} textAnchor="middle" fill="#87939c" fontSize="11">{row.label.length > 10 ? `${row.label.slice(0, 10)}…` : row.label}</text>)}
+    </svg> : <div className="dataset-empty">当前结果没有可绘制的数值列，将以表格展示。</div>}
+    <div className="dataset-table-wrap"><table className="dataset-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.slice(0, 8).map((row, rowIndex) => <tr key={rowIndex}>{columns.map((column, columnIndex) => <td key={`${rowIndex}-${column}`}>{String(row[columnIndex] ?? '')}</td>)}</tr>)}</tbody></table></div>
+  </div>;
+}
+
+function AgentPanel({ task, setTask, model, setModel, submitTask, taskState, events, datasets }) {
   const result = events.find((event) => event.event === 'task_result')?.data?.result;
-  return <section className="agent-page"><div className="agent-hero"><div><p className="section-kicker">MULTI-AGENT WORKSPACE</p><h2>把复杂问题，交给你的智能团队。</h2><p className="muted">网络搜索、数据库查询、知识库检索，统一在一次任务中协作完成。</p></div><div className="agent-orbit"><span className="orbit-core"><Icon name="bot" size={28} /></span><i className="orbit-dot one" /><i className="orbit-dot two" /><i className="orbit-dot three" /></div></div><form className="task-composer" onSubmit={(event) => submitTask(event, model)}><div className="composer-label-row"><label htmlFor="task-input">告诉 Agent 你要了解什么</label><label className="model-picker" htmlFor="model-select"><span>使用模型</span><select id="model-select" value={model} onChange={(event) => setModel(event.target.value)}>{MODELS.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.note}</option>)}</select></label></div><textarea id="task-input" value={task} onChange={(e) => setTask(e.target.value)} placeholder="例如：分析今年各区域空调销售表现，并给出库存和客户运营建议" /><div className="composer-footer"><div className="agent-capabilities"><span><i />网络搜索</span><span><i />数据库</span><span><i />知识库</span></div><button className="primary-button" disabled={taskState === 'running'}>{taskState === 'running' ? '任务执行中…' : '提交分析'} <Icon name="send" size={16} /></button></div></form><div className="agent-status panel"><div className="panel-head"><div><p className="panel-label">LIVE TRACE</p><h3>执行轨迹</h3></div><span className={`run-status ${taskState}`}>{taskState === 'running' ? '运行中' : taskState === 'done' ? '已完成' : taskState === 'error' ? '出现错误' : '等待任务'}</span></div>{result && <div className="result-block"><p className="panel-label">RESULT</p><div className="result-content">{result}</div></div>}{events.length === 0 ? <div className="empty-state"><Icon name="pulse" size={26} /><p>提交任务后，这里会实时显示 Agent 的协作进度。</p></div> : <div className="event-list" aria-live="polite">{events.map((event, index) => <div className={`event-row ${event.status || 'info'}`} key={event.event_id || `${event.localTime}-${index}`}><span className="event-line" /><div><strong>{event.message || event.event}</strong><small>{eventLabel(event.event)} · {event.localTime}{event.data?.duration_ms != null ? ` · ${formatDuration(event.data.duration_ms)}` : ''}</small></div></div>)}</div>}</div></section>;
+  return <section className="agent-page"><div className="agent-hero"><div><p className="section-kicker">MULTI-AGENT WORKSPACE</p><h2>把复杂问题，交给你的智能团队。</h2><p className="muted">网络搜索、数据库查询、知识库检索，统一在一次任务中协作完成。</p></div><div className="agent-orbit"><span className="orbit-core"><Icon name="bot" size={28} /></span><i className="orbit-dot one" /><i className="orbit-dot two" /><i className="orbit-dot three" /></div></div><form className="task-composer" onSubmit={(event) => submitTask(event, model)}><div className="composer-label-row"><label htmlFor="task-input">告诉 Agent 你要了解什么</label><label className="model-picker" htmlFor="model-select"><span>使用模型</span><select id="model-select" value={model} onChange={(event) => setModel(event.target.value)}>{MODELS.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.note}</option>)}</select></label></div><textarea id="task-input" value={task} onChange={(e) => setTask(e.target.value)} placeholder="例如：分析今年各区域空调销售表现，并给出库存和客户运营建议" /><div className="composer-footer"><div className="agent-capabilities"><span><i />网络搜索</span><span><i />数据库</span><span><i />知识库</span></div><button className="primary-button" disabled={taskState === 'running'}>{taskState === 'running' ? '任务执行中…' : '提交分析'} <Icon name="send" size={16} /></button></div></form>{datasets.map((item) => <DatasetBlock key={item.event_id} dataset={item.data} receivedAt={item.localTime} />)}<div className="agent-status panel"><div className="panel-head"><div><p className="panel-label">LIVE TRACE</p><h3>执行轨迹</h3></div><span className={`run-status ${taskState}`}>{taskState === 'running' ? '运行中' : taskState === 'done' ? '已完成' : taskState === 'error' ? '出现错误' : '等待任务'}</span></div>{result && <div className="result-block"><p className="panel-label">RESULT</p><div className="result-content">{result}</div></div>}{events.length === 0 ? <div className="empty-state"><Icon name="pulse" size={26} /><p>提交任务后，这里会实时显示 Agent 的协作进度。</p></div> : <div className="event-list" aria-live="polite">{events.map((event, index) => <div className={`event-row ${event.status || 'info'}`} key={event.event_id || `${event.localTime}-${index}`}><span className="event-line" /><div><strong>{event.message || event.event}</strong><small>{eventLabel(event.event)} · {event.localTime}{event.data?.duration_ms != null ? ` · ${formatDuration(event.data.duration_ms)}` : ''}</small></div></div>)}</div>}</div></section>;
 }
 
 function DataPanel() { return <section className="data-page"><div className="page-intro"><p className="section-kicker">DATA CATALOG</p><h2>业务数据目录</h2><p className="muted">已连接到本地 MySQL 数据库，当前共 46 条业务记录。</p></div><div className="catalog-grid">{[['customers', '客户档案', '客户等级、消费与注册信息', '8 条', 'users'], ['products', '商品库存', '价格、能效、库存与品牌', '10 条', 'box'], ['sales', '销售订单', '区域、金额、状态与日期', '20 条', 'trend'], ['service_records', '售后服务', '安装、保养与维修记录', '8 条', 'service']].map(([table, title, text, count, icon]) => <div className="catalog-row" key={table}><div className="catalog-icon"><Icon name={icon} /></div><div><strong>{title}</strong><small>{text}</small></div><span>{count}</span><button aria-label={`查看${title}`}><Icon name="arrow" size={16} /></button></div>)}</div><div className="data-note"><Icon name="database" /><div><strong>自然语言查询</strong><p>直接前往 Agent 任务，让智能团队帮你查询、联结并解释这些数据。</p></div></div></section>; }

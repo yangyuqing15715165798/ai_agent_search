@@ -171,7 +171,7 @@ async def run_deep_agent(task_query, session_id, model_name=None):
                         )
 
         if final_result:
-            print(f"主智能体执行结果，最终结果：{final_result[:100]}")
+            print(f"主智能体执行完成，最终答案长度：{len(str(final_result))}")
             monitor.report_task_result(final_result)
 
     except Exception as e :
