@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">🤖 Deep Search Pro</h1>
+  <h1 align="center">🤖 AI Agent Search</h1>
   <p align="center"><b>一个轻量的多智能体协作系统 —— Agent 开发入门实战项目</b></p>
   <p align="center">
     <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python">
@@ -94,8 +94,8 @@ api/monitor.py         ← 埋点监控 + 事件循环归属判断
 ### 第一步：克隆 + 装依赖
 
 ```bash
-git clone https://github.com/你的用户名/deep-search-pro.git
-cd deep-search-pro
+git clone git@github.com:yangyuqing15715165798/ai_agent_search.git
+cd ai_agent_search
 pip install -r requirements.txt
 ```
 
@@ -199,7 +199,7 @@ curl -X POST http://localhost:8000/api/task \
 ## 📁 项目文件速查
 
 ```
-deep_search_pro/
+ai_agent_search/
 │
 ├── agent/                          # 🤖 智能体层（核心）
 │   ├── llm.py                      # 模型初始化，10 行
