@@ -108,10 +108,10 @@ cp .env.example .env
 编辑 `.env`，最少只需要填 3 个：
 
 ```env
-# 必填：LLM 服务（以阿里云百炼为例）
-OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxx
-LLM_QWEN_MAX=qwen-max
+# 必填：LLM 服务（OpenAI 兼容接口）
+OPENAI_BASE_URL=https://token.sensenova.cn/v1
+OPENAI_API_KEY=你的接口密钥
+LLM_DEFAULT_MODEL=sensenova-6.7-flash-lite
 
 # 必填：网络搜索
 TAVILY_API_KEY=tvly-xxxxxxxxxxxxxxxx
@@ -164,7 +164,7 @@ glm-5.2
 sensenova-u1-fast
 ```
 
-默认模型由 `.env` 中的 `LLM_QWEN_MAX` 指定。不同模型的可用性取决于你配置的 OpenAI 兼容服务商。
+默认模型由 `.env` 中的 `LLM_DEFAULT_MODEL` 指定。不同模型的可用性取决于你配置的 OpenAI 兼容服务商。
 
 ### 第四步：试一试
 

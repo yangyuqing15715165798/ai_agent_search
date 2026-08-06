@@ -13,11 +13,11 @@ AVAILABLE_MODELS = [
     "sensenova-u1-fast",
 ]
 
-DEFAULT_MODEL = os.getenv("LLM_QWEN_MAX")
+DEFAULT_MODEL = os.getenv("LLM_DEFAULT_MODEL")
 
 if DEFAULT_MODEL not in AVAILABLE_MODELS:
     raise ValueError(
-        f"模型 {DEFAULT_MODEL!r} 不在可用列表中，请检查 LLM_QWEN_MAX 配置。"
+        f"模型 {DEFAULT_MODEL!r} 不在可用列表中，请检查 LLM_DEFAULT_MODEL 配置。"
     )
 
 
